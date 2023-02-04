@@ -89,8 +89,10 @@ async def on_message(message):
                 description = args[3]
                 clip = args[5] if len(args) > 5 else None
                 db.insertRecord(title, description, clip, None, message.author.id, datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S"))
-
-
+    except Exception as e:
+        embed = discord.Embed(title="Erreur", description="Une erreur est survenue.", color=0xff0000)
+        embed.add_field(name="Erreur", value=e)
+        await message.channel.send(embed=embed)
                 
 def userHasRole(user, role):
     for r in user.roles:
