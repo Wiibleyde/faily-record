@@ -10,6 +10,10 @@ class Logger:
     def __init__(self, fileName, debugMode=False):
         self.fileName = fileName
         self.debugMode = debugMode
+        if debugMode:
+            self.debug("Debug mode enabled")
+        else:
+            self.info("Debug mode disabled")
 
     def info(self, message):
         stringToWrite = f"[INFO] [{datetime.datetime.now()}] {message}"
@@ -81,12 +85,14 @@ class Config:
 class Data:
     def __init__(self, fileName):
         self.fileName = fileName
-        req = "CREATE TABLE IF NOT EXISTS records (id INTEGER PRIMARY KEY, name TEXT, date TEXT, type TEXT, description TEXT, juge TEXT)"
+        req1 = "CREATE TABLE IF NOT EXISTS records (id INTEGER PRIMARY KEY, name TEXT, date TEXT, type TEXT, description TEXT, juge TEXT)"
+        req2 = "CREATE TABLE IF NOT EXISTS message (id INTEGER PRIMARY KEY, idMessage INTEGER, idRecord INTEGER)"
         self.conn = sqlite3.connect(self.fileName)
         self.cursor = self.conn.cursor()
-        self.cursor.execute(req)
+        self.cursor.execute(req1)
+        self.cursor.execute(req2)
         self.conn.commit()
-
+        
     def addRecord(self, name, date, type, description, juge):
         req = "INSERT INTO records (name, date, type, description, juge) VALUES (?, ?, ?, ?, ?)"
         self.cursor.execute(req, (name, date, type, description, juge))
@@ -101,6 +107,11 @@ class Data:
     def getRecord(self, id):
         req = "SELECT * FROM records WHERE id = ?"
         self.cursor.execute(req, (id,))
+        return self.cursor.fetchone()
+    
+    def getRandomRecord(self):
+        req = "SELECT * FROM records ORDER BY RANDOM() LIMIT 1"
+        self.cursor.execute(req)
         return self.cursor.fetchone()
     
     def updateRecord(self, id, name, date, type, description, juge):
@@ -118,6 +129,23 @@ class Data:
         req = "SELECT * FROM records WHERE type = ?"
         self.cursor.execute(req, (type,))
         return self.cursor.fetchall()
+    
+    def addMessage(self, idMessage, idRecord):
+        req = "INSERT INTO message (idMessage, idRecord) VALUES (?, ?)"
+        self.cursor.execute(req, (idMessage, idRecord))
+        self.conn.commit()
+        logs.debug(f"Added message {idMessage} for record {idRecord}")
+
+    def getMessage(self, recordId):
+        req = "SELECT * FROM message WHERE idRecord = ?"
+        self.cursor.execute(req, (recordId,))
+        return self.cursor.fetchone()
+    
+    def deleteMessage(self, recordId):
+        req = "DELETE FROM message WHERE idRecord = ?"
+        self.cursor.execute(req, (recordId,))
+        self.conn.commit()
+        logs.debug(f"Deleted message {recordId}")
 
 class Addrecord(ui.Modal, title="Ajouter un record"):
     titleRecord = ui.TextInput(label="Titre du record", placeholder="Titre du record", required=True)
@@ -129,12 +157,24 @@ class Addrecord(ui.Modal, title="Ajouter un record"):
         data.addRecord(str(self.titleRecord), str(self.dateRecord), str(self.typeRecord), str(self.descriptionRecord), str(interaction.user.name))
         await interaction.response.send_message("Record ajouté", ephemeral=True)
 
+def getArgs():
+    args = os.sys.argv
+    if len(args) > 1:
+        if args[1] == "--debug":
+            return True
+    else:
+        return False
+
 bot = commands.Bot(command_prefix="!", intents=discord.Intents.all())
+logs = Logger("logs.log", getArgs())
+config = Config("config.json")
+data = Data("data.db")
 
 @bot.event
 async def on_ready():
     logs.info("Bot is ready")
     try:
+        StatusLoop.start()
         synced = await bot.tree.sync()
         logs.debug(f"Synced {len(synced)} commands")
         logs.debug(f"Commands: {synced}")
@@ -159,11 +199,59 @@ async def addrecord(interaction: discord.Interaction):
         embed = discord.Embed(title=str(modal.titleRecord), description=str(modal.descriptionRecord), color=0x109500)
     embed.set_author(name=str(interaction.user.name))
     embed.set_footer(text=f"ID: {data.getRecords()[-1][0]}")
-    await channel.send(embed=embed)
-    
+    messaage = await channel.send(embed=embed)
+    messageId = messaage.id
+    recordId = data.getRecords()[-1][0]
+    data.addMessage(messageId, recordId)
+
+@bot.tree.command(name="removerecord", description="Supprimer un record")
+async def removerecord(interaction: discord.Interaction, id: int):
+    logs.info(f"removerecord command used by {interaction.user}")
+    try:
+        messageId = data.getMessage(id)[1]
+        if messageId is not None:
+            logs.debug(f"Deleting message {messageId}")
+            channel = bot.get_channel(config.fdoChan)
+            messageId = await channel.fetch_message(messageId)
+            await messageId.delete()
+            data.deleteMessage(id)
+            data.deleteRecord(id)
+        await interaction.response.send_message("Record supprimé", ephemeral=True)
+    except discord.NotFound:
+        await interaction.response.send_message("Le message correspondant à cet ID est introuvable", ephemeral=True)
+    except Exception as e:
+        logs.error(f"Error in removerecord command: {e}")
+        await interaction.response.send_message("Une erreur s'est produite lors de la suppression du record", ephemeral=True)
+
+# @bot.tree.command(name="editrecord", description="Modifier un record")
+# async def editrecord(interaction: discord.Interaction, id: int, title: str, date: str, description: str):
+#     logs.info(f"editrecord command used by {interaction.user}")
+#     try:
+#         messageId = data.getMessage(id)[1]
+#         if messageId is not None:
+#             logs.debug(f"Editing message {messageId}")
+#             channel = bot.get_channel(config.fdoChan)
+#             messageId = await channel.fetch_message(messageId)
+#             await messageId.edit(embed=discord.Embed(title=title, description=description, color=0x000fff))
+#             data.editRecord(id, title, date, description)
+#         await interaction.response.send_message("Record modifié", ephemeral=True)
+#     except discord.NotFound:
+#         await interaction.response.send_message("Le message correspondant à cet ID est introuvable", ephemeral=True)
+#     except Exception as e:
+#         logs.error(f"Error in editrecord command: {e}")
+#         await interaction.response.send_message("Une erreur s'est produite lors de la modification du record", ephemeral=True)
+
+@tasks.loop(seconds=60)
+async def StatusLoop():
+    logs.debug("Updating status")
+    try:
+        randomRecord = data.getRandomRecord()
+        if randomRecord is not None:
+            strStatus = f"{randomRecord[1]} ({randomRecord[2]}) - {(randomRecord[4])[0:10]}"
+            await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name=strStatus))
+    except Exception as e:
+        logs.error(f"Error in StatusLoop: {e}")
+        
 if __name__ == '__main__':
-    logs = Logger("logs.log", True)
-    config = Config("config.json")
-    data = Data("data.db")
     logs.info("Starting bot...")
     bot.run(config.botToken, log_level=0, reconnect=True)
