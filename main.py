@@ -1,135 +1,169 @@
 import discord
-import sqlite3
-import json
-import time
+from discord import app_commands, ui
+from discord.ext import commands, tasks
 import datetime
+import os
+import json
+import sqlite3
 
-commandList = ["addrecord", "deleterecord", "editrecord","maintenance","help"]
+class Logger:
+    def __init__(self, fileName, debugMode=False):
+        self.fileName = fileName
+        self.debugMode = debugMode
+
+    def info(self, message):
+        stringToWrite = f"[INFO] [{datetime.datetime.now()}] {message}"
+        print(stringToWrite)
+        with open(self.fileName, "a") as file:
+            file.write(stringToWrite + "\n")
+
+    def error(self, message):
+        stringToWrite = f"[ERROR] [{datetime.datetime.now()}] {message}"
+        print(stringToWrite)
+        with open(self.fileName, "a") as file:
+            file.write(stringToWrite + "\n")
+
+    def warning(self, message):
+        stringToWrite = f"[WARN] [{datetime.datetime.now()}] {message}"
+        print(stringToWrite)
+        with open(self.fileName, "a") as file:
+            file.write(stringToWrite + "\n")
+
+    def debug(self, message):
+        if not self.debugMode:
+            return
+        stringToWrite = f"[DEBUG] [{datetime.datetime.now()}] {message}"
+        print(stringToWrite)
+        with open(self.fileName, "a") as file:
+            file.write(stringToWrite + "\n")
 
 class Config:
     def __init__(self, fileName):
         self.fileName = fileName
-        if not self.isConfig():
-            print("Config file not found, creating one...")
-            self.createConfig()
-        
-    def isConfig(self):
-        try:
-            with open(self.fileName, "r") as f:
-                return True
-        except FileNotFoundError:
-            return False
+        if not os.path.exists(self.fileName):
+            self.createFile()
+            logs.info("Created config file")
+            logs.error("Please fill in the config file")
+            exit()
+        self.config = self.loadFile()
+        self.botToken = self.config["BotToken"]
+        logs.debug(f"Bot token: {self.botToken}")
+        self.fdoChan = self.config["fdoChan"]
+        logs.debug(f"FDO channel: {self.fdoChan}")
+        self.medicChan = self.config["medicChan"]
+        logs.debug(f"Medic channel: {self.medicChan}")
+        self.otherChan = self.config["otherChan"]
+        logs.debug(f"Other channel: {self.otherChan}")
+        self.jugeRoleId = self.config["jugeRoleId"]
+        logs.debug(f"Juge role: {self.jugeRoleId}")
+        self.adminRoleId = self.config["adminRoleId"]
 
-    def createConfig(self):
+
+    def createFile(self):
         with open(self.fileName, "w") as f:
-            json.dump({"token": "your token here", "prefix": "your prefix here", "maintenance": False, "modRoleId": "your mod role id here", "jugeRoleId": "your juge role id here", "fdoChannelId": "your fdo channel id here", "medicChannelId": "your medic channel id here"}, f)
+            json.dump({"BotToken": "", "fdoChan":0,"medicChan":0,"otherChan":0,"jugeRoleId":1071406789368741969,"adminRoleId":1071263552675000400}, f, indent=4)
 
-    def loadConfig(self):
+    def loadFile(self):
         with open(self.fileName, "r") as f:
             return json.load(f)
+        
+    def saveFile(self):
+        with open(self.fileName, "w") as f:
+            json.dump(self.config, f, indent=4)
 
-class Database:
+    def setKey(self,key,value):
+        self.config[key] = value
+        self.saveFile()
+
+    def getKey(self,key):
+        return self.config[key]
+
+class Data:
     def __init__(self, fileName):
         self.fileName = fileName
-        if not self.isDatabase():
-            print("Database file not found, creating one...")
-            self.createDatabase()
+        req = "CREATE TABLE IF NOT EXISTS records (id INTEGER PRIMARY KEY, name TEXT, date TEXT, type TEXT, description TEXT, juge TEXT)"
         self.conn = sqlite3.connect(self.fileName)
         self.cursor = self.conn.cursor()
-
-    def isDatabase(self):
-        try:
-            with open(self.fileName, "r") as f:
-                return True
-        except FileNotFoundError:
-            return False
-
-    def createDatabase(self):
-        with open(self.fileName, "w") as f:
-            pass
-
-    def createTable(self):
-        self.cursor.execute("CREATE TABLE IF NOT EXISTS logs (id INTEGER PRIMARY KEY, channel_id INTEGER, command TEXT, user_id INTEGER, time TEXT)")
-        self.cursor.execute("CREATE TABLE IF NOT EXISTS records(id INTEGER PRIMARY KEY, title TEXT, description TEXT, clip TEXT, image TEXT, user_id INTEGER, time TEXT)")
+        self.cursor.execute(req)
         self.conn.commit()
 
-    def insertLog(self, channel_id, command, user_id, time):
-        self.cursor.execute("INSERT INTO logs VALUES (NULL, ?, ?, ?, ?)", (channel_id, command, user_id, time))
+    def addRecord(self, name, date, type, description, juge):
+        req = "INSERT INTO records (name, date, type, description, juge) VALUES (?, ?, ?, ?, ?)"
+        self.cursor.execute(req, (name, date, type, description, juge))
+        self.conn.commit()
+        logs.debug(f"Added record {name} by {juge}")
+
+    def getRecords(self):
+        req = "SELECT * FROM records"
+        self.cursor.execute(req)
+        return self.cursor.fetchall()
+    
+    def getRecord(self, id):
+        req = "SELECT * FROM records WHERE id = ?"
+        self.cursor.execute(req, (id,))
+        return self.cursor.fetchone()
+    
+    def updateRecord(self, id, name, date, type, description, juge):
+        req = "UPDATE records SET name = ?, date = ?, type = ?, description = ?, juge = ? WHERE id = ?"
+        self.cursor.execute(req, (name, date, type, description, juge, id))
         self.conn.commit()
 
-    def insertRecord(self, title, description, clip, image, user_id, time):
-        self.cursor.execute("INSERT INTO records VALUES (NULL, ?, ?, ?, ?, ?, ?)", (title, description, clip, image, user_id, time))
+    def deleteRecord(self, id):
+        req = "DELETE FROM records WHERE id = ?"
+        self.cursor.execute(req, (id,))
         self.conn.commit()
+        logs.debug(f"Deleted record {id}")
 
-client = discord.Client()
+    def getRecordByType(self, type):
+        req = "SELECT * FROM records WHERE type = ?"
+        self.cursor.execute(req, (type,))
+        return self.cursor.fetchall()
 
-@client.event
+class Addrecord(ui.Modal, title="Ajouter un record"):
+    titleRecord = ui.TextInput(label="Titre du record", placeholder="Titre du record", required=True)
+    dateRecord = ui.TextInput(label="Date du record", placeholder="Date du record", required=True)
+    typeRecord = ui.TextInput(label="Type du record", placeholder="FDO, Medic, Autre", required=True)
+    descriptionRecord = ui.TextInput(label="Description du record", placeholder="Description du record", required=True)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        data.addRecord(str(self.titleRecord), str(self.dateRecord), str(self.typeRecord), str(self.descriptionRecord), str(interaction.user.name))
+        await interaction.response.send_message("Record ajouté", ephemeral=True)
+
+bot = commands.Bot(command_prefix="!", intents=discord.Intents.all())
+
+@bot.event
 async def on_ready():
-    print("Logged in as {0.user}".format(client))
-
-@client.event
-async def on_message(message):
+    logs.info("Bot is ready")
     try:
-        if message.content.startswith(getPrefix()):
-            command = message.content[1:].split(" ")[0]
-            if getMaintenance() and not userHasRole(message.author, getModRoleId()):
-                embed = discord.Embed(title="Maintenance", description="Le bot est en maintenance.", color=0xff0000)
-                await message.channel.send(embed=embed)
-                return
-            if getMaintenance() and userHasRole(message.author, getModRoleId()):
-                await message.channel.send("Le bot est en maintenance mais vous avez les droits de modération.")
-            if command == "addrecord" and userHasRole(message.author, getJugeRoleId()):
-                # addrecord "<title>" "<description>" "<clip (optional)>"
-                args = message.content[1:].split('"')
-                if len(args) < 3:
-                    embed = discord.Embed(title="Erreur", description="Il manque des arguments.", color=0xff0000)
-                    await message.channel.send(embed=embed)
-                    return
-                title = args[1]
-                description = args[3]
-                clip = args[5] if len(args) > 5 else None
-                db.insertRecord(title, description, clip, None, message.author.id, datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S"))
+        synced = await bot.tree.sync()
+        logs.debug(f"Synced {len(synced)} commands")
+        logs.debug(f"Commands: {synced}")
     except Exception as e:
-        embed = discord.Embed(title="Erreur", description="Une erreur est survenue.", color=0xff0000)
-        embed.add_field(name="Erreur", value=e)
-        await message.channel.send(embed=embed)
-                
-def userHasRole(user, role):
-    for r in user.roles:
-        if r.id == role:
-            return True
-    return False
+        logs.error(f"Failed to sync commands: {e}")
 
-def getToken():
-    return config["token"]
-
-def getPrefix():
-    return config["prefix"]
-
-def getMaintenance():
-    return config["maintenance"]
-
-def getModRoleId():
-    return config["modRoleId"]
-
-def getJugeRoleId():
-    return config["jugeRoleId"]
-
-def getFdoChannelId():
-    return config["fdoChannelId"]
-
-def getMedicChannelId():
-    return config["medicChannelId"]
-
-if __name__=='__main__':
-    global config
-    print("Starting...")
-    configFile = Config("conf.json")
-    config=configFile.loadConfig()
-    print("Loaded config")
-    db = Database("database.db")
-    db.createTable()
-    print("Loaded database")
-    print("Starting bot...")
-    client.run(getToken())
-    print("Bot stopped")
+@bot.tree.command(name="addrecord", description="Ajouter un record")
+async def addrecord(interaction: discord.Interaction):
+    logs.info(f"addrecord command used by {interaction.user}")
+    modal = Addrecord()
+    await interaction.response.send_modal(modal)
+    await modal.wait()
+    await interaction.followup.send("Record ajouté")
+    if str(modal.typeRecord) == "FDO":
+        channel = bot.get_channel(config.fdoChan)
+        embed = discord.Embed(title=str(modal.titleRecord), description=str(modal.descriptionRecord), color=0x000fff)
+    elif str(modal.typeRecord) == "Medic":
+        channel = bot.get_channel(config.medicChan)
+        embed = discord.Embed(title=str(modal.titleRecord), description=str(modal.descriptionRecord), color=0xff0000)
+    else:
+        channel = bot.get_channel(config.otherChan)
+        embed = discord.Embed(title=str(modal.titleRecord), description=str(modal.descriptionRecord), color=0x109500)
+    embed.set_author(name=str(interaction.user.name))
+    embed.set_footer(text=f"ID: {data.getRecords()[-1][0]}")
+    await channel.send(embed=embed)
+    
+if __name__ == '__main__':
+    logs = Logger("logs.log", True)
+    config = Config("config.json")
+    data = Data("data.db")
+    logs.info("Starting bot...")
+    bot.run(config.botToken, log_level=0, reconnect=True)
