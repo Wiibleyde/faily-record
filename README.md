@@ -3,7 +3,7 @@
 ![Last Commit](https://img.shields.io/github/last-commit/wiibleyde/faily-record.svg)
 ![Build Status](https://travis-ci.org/wiibleyde/faily-record.svg?branch=master)
 
-A simple discord bot to record your fails and share them with your friends. (Made for the discord [Faily Guinness Record](https://discord.gg/YtGRQs9KHf) server)
+A simple discord bot to share records. (Made for the discord [Faily Guinness Record](https://discord.gg/YtGRQs9KHf) server)
 
 ## Installation
 
