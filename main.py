@@ -247,7 +247,7 @@ async def StatusLoop():
     try:
         randomRecord = data.getRandomRecord()
         if randomRecord is not None:
-            strStatus = f"{randomRecord[1]} ({randomRecord[2]}) - {(randomRecord[4])[0:10]}"
+            strStatus = f"{randomRecord[1]} - {(randomRecord[4])[0:10]}"
             await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name=strStatus))
     except Exception as e:
         logs.error(f"Error in StatusLoop: {e}")
