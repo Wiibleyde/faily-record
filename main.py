@@ -5,6 +5,8 @@ import datetime
 import os
 import json
 import sqlite3
+import requests
+from bs4 import BeautifulSoup
 
 class Logger:
     def __init__(self, fileName, debugMode=False):
@@ -34,10 +36,9 @@ class Logger:
             file.write(stringToWrite + "\n")
 
     def debug(self, message):
-        if not self.debugMode:
-            return
         stringToWrite = f"[DEBUG] [{datetime.datetime.now()}] {message}"
-        print(stringToWrite)
+        if self.debugMode:
+            print(stringToWrite)
         with open(self.fileName, "a") as file:
             file.write(stringToWrite + "\n")
 
@@ -164,6 +165,17 @@ def getArgs():
             return True
     else:
         return False
+    
+def getWikiPage(search):
+    url = "https://failyv.fandom.com/fr/wiki/Spécial:Recherche?query=+"+search.replace(" ","+")
+    response = requests.request("GET", url)
+    data=response.text
+    soup = BeautifulSoup(data, 'html.parser')
+    for link in soup.find_all('a'):
+        if link.get('class') != None:
+            if link.get('class')[0] == "unified-search__result__link":
+                return link.get('href')
+    return None
 
 bot = commands.Bot(command_prefix="!", intents=discord.Intents.all())
 logs = Logger("logs.log", getArgs())
@@ -258,6 +270,20 @@ async def record(interaction: discord.Interaction, id: int):
 #     except Exception as e:
 #         logs.error(f"Error in editrecord command: {e}")
 #         await interaction.response.send_message("Une erreur s'est produite lors de la modification du record", ephemeral=True)
+
+@bot.tree.command(name="wiki", description="Affiche la page wiki")
+async def wiki(interaction: discord.Interaction, search: str, afficher: bool = False):
+    logs.info(f"wiki command used by {interaction.user}")
+    embed = discord.Embed(title="Wiki", description=f"Résultat de la recherche {search}", color=0x00ff00)
+    result = getWikiPage(search)
+    if result == None:
+        embed.add_field(name="Résultat", value="Aucun résultat", inline=False)
+    else:
+        embed.add_field(name="Résultat", value=result, inline=False)
+    if afficher:
+        await interaction.response.send_message(embed=embed)
+    else:
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
 @tasks.loop(seconds=60)
 async def StatusLoop():
