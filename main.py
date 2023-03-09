@@ -208,12 +208,18 @@ async def addrecord(interaction: discord.Interaction):
 async def removerecord(interaction: discord.Interaction, id: int):
     logs.info(f"removerecord command used by {interaction.user}")
     try:
-        messageId = data.getMessage(id)[1]
-        if messageId is not None:
-            logs.debug(f"Deleting message {messageId}")
-            channel = bot.get_channel(config.fdoChan)
-            messageId = await channel.fetch_message(messageId)
-            await messageId.delete()
+        messageData = data.getMessage(id)
+        if messageData is not None:
+            logs.debug(f"Deleting message {messageData[1]}")
+            if str(data.getRecord(id)[3]) == "FDO":
+                channel = bot.get_channel(config.fdoChan)
+            elif str(data.getRecord(id)[3]) == "Medic":
+                channel = bot.get_channel(config.medicChan)
+            else:
+                channel = bot.get_channel(config.otherChan)
+            message = await channel.fetch_message(messageData[1])
+            logs.debug(message)
+            await message.delete()
             data.deleteMessage(id)
             data.deleteRecord(id)
         await interaction.response.send_message("Record supprimé", ephemeral=True)
@@ -222,6 +228,18 @@ async def removerecord(interaction: discord.Interaction, id: int):
     except Exception as e:
         logs.error(f"Error in removerecord command: {e}")
         await interaction.response.send_message("Une erreur s'est produite lors de la suppression du record", ephemeral=True)
+
+@bot.tree.command(name="record", description="Afficher un record")
+async def record(interaction: discord.Interaction, id: int):
+    logs.info(f"record command used by {interaction.user}")
+    record = data.getRecord(id)
+    if record is not None:
+        embed = discord.Embed(title=record[1], description=record[3], color=0x000fff)
+        embed.set_author(name=record[4])
+        embed.set_footer(text=f"ID: {record[0]}")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+    else:
+        await interaction.response.send_message("Record introuvable", ephemeral=True)
 
 # @bot.tree.command(name="editrecord", description="Modifier un record")
 # async def editrecord(interaction: discord.Interaction, id: int, title: str, date: str, description: str):
