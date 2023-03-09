@@ -253,6 +253,21 @@ async def record(interaction: discord.Interaction, id: int):
     else:
         await interaction.response.send_message("Record introuvable", ephemeral=True)
 
+@bot.tree.command(name="setchannel", description="Définir un channel")
+async def setchannel(interaction: discord.Interaction, channel: int, type: str):
+    logs.info(f"setchannel command used by {interaction.user}")
+    if type == "FDO":
+        config.setKey("fdoChan", int(channel))
+    elif type == "Medic":
+        config.setKey("medicChan", int(channel))
+    elif type == "Autre":
+        config.setKey("otherChan", int(channel))
+    else:
+        await interaction.response.send_message("Type de channel invalide", ephemeral=True)
+        return
+    await interaction.response.send_message("Channel défini", ephemeral=True)
+
+
 # @bot.tree.command(name="editrecord", description="Modifier un record")
 # async def editrecord(interaction: discord.Interaction, id: int, title: str, date: str, description: str):
 #     logs.info(f"editrecord command used by {interaction.user}")
